@@ -1,9 +1,10 @@
-using DiscoWeb.BackgroundServices;
-using DiscoWeb.Models;
-using DiscoWeb.Queues;
+using DiscoDB;
+using DiscoDB.Models;
+using DiscoWeb.Discord;
 using DiscoWeb.ResultConversion;
 using DiscoWeb.Services;
 using FluentResults.Extensions.AspNetCore;
+using Microsoft.EntityFrameworkCore;
 using NetCord;
 using NetCord.Rest;
 
@@ -11,15 +12,19 @@ AspNetCoreResult.Setup(config => config.DefaultProfile = new CustomFluentResults
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddDbContext<DiscoContext>(options =>
+    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddScoped<IStorageService, StorageService>();
-builder.Services.AddSingleton<ITaskQueue<StorageTask>, StorageTaskQueue>();
-builder.Services.AddSingleton<DiscoWeb.Services.Processors.FileTaskProcessor>();
-builder.Services.AddSingleton<DiscoWeb.Services.Processors.FolderTaskProcessor>();
+builder.Services.AddHttpClient();
 
+builder.Services.AddScoped<IFileStorageService, FileStorageService>();
+builder.Services.AddScoped<IFolderStorageService, FolderStorageService>();
+
+builder.Services.AddSingleton<IDiscordFileStorage, DiscordFileStorage>();
 builder.Services.AddSingleton(serviceProvider =>
 {
     var configuration = serviceProvider.GetRequiredService<IConfiguration>();
@@ -29,9 +34,23 @@ builder.Services.AddSingleton(serviceProvider =>
     return new RestClient(new BotToken(botTokenString));
 });
 
-builder.Services.AddHostedService<DiscordBotWorker>();
-
 var app = builder.Build();
+
+#region Database Initialization
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<DiscoContext>();
+
+    if (db.Database.EnsureCreated())
+    {
+        db.Folders.Add(new Folder
+        {
+            Name = "",
+        });
+        db.SaveChanges();
+    }
+}
+#endregion
 
 if (app.Environment.IsDevelopment())
 {

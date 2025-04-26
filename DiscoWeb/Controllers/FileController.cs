@@ -1,45 +1,39 @@
 ﻿using DiscoWeb.Services;
-using FluentResults;
 using FluentResults.Extensions.AspNetCore;
 using Microsoft.AspNetCore.Mvc;
-using System.Text;
 
 namespace DiscoWeb.Controllers;
 
 [Route("file")]
 [ApiController]
-public class FileController(IStorageService storageService) : ControllerBase
+public class FileController(IFileStorageService storageService) : ControllerBase
 {
-    [HttpGet]
-    public async Task<IActionResult> GetFile([FromQuery] string path)
+    [HttpGet("{fileId:guid}")]
+    public async Task<IActionResult> GetFile(Guid fileId)
     {
-        var result = await storageService.GetFileAsync(path);
+        var result = await storageService.GetFileAsync(fileId);
 
         if (result.IsFailed)
         {
             return result.ToActionResult();
         }
 
-        // For successful results, return a file download
-        string fileName = Path.GetFileName(path);
-        byte[] fileBytes = Convert.FromBase64String(result.Value);
-        
-        return Result.Ok(File(fileBytes, "application/octet-stream", fileName))
-            .ToActionResult();
+        //cannot use result here as .ToActionResult does not work properly for File download
+        return File(result.Value.Content, "application/octet-stream", result.Value.FileName);
     }
 
-    [HttpDelete]
-    public async Task<IActionResult> DeleteFile([FromQuery] string path)
+    [HttpDelete("{fileId:guid}")]
+    public async Task<IActionResult> DeleteFile(Guid fileId)
     {
-        var result = await storageService.DeleteFileAsync(path);
+        var result = await storageService.DeleteFileAsync(fileId);
 
         return result.ToActionResult();
     }
 
-    [HttpPost]
-    public async Task<IActionResult> UploadFile([FromQuery] string path, IFormFile file)
+    [HttpPost("{folderId:guid}")]
+    public async Task<IActionResult> UploadFile(Guid folderId, IFormFile file)
     {
-        var result = await storageService.UploadFileAsync(path, file);
+        var result = await storageService.UploadFileAsync(folderId, file);
 
         return result.ToActionResult();
     }
