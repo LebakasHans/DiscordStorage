@@ -1,6 +1,8 @@
 ﻿using DiscoWeb.Services;
+using FluentResults;
 using FluentResults.Extensions.AspNetCore;
 using Microsoft.AspNetCore.Mvc;
+using System.Text;
 
 namespace DiscoWeb.Controllers;
 
@@ -13,7 +15,17 @@ public class FileController(IStorageService storageService) : ControllerBase
     {
         var result = await storageService.GetFileAsync(path);
 
-        return result.ToActionResult();
+        if (result.IsFailed)
+        {
+            return result.ToActionResult();
+        }
+
+        // For successful results, return a file download
+        string fileName = Path.GetFileName(path);
+        byte[] fileBytes = Convert.FromBase64String(result.Value);
+        
+        return Result.Ok(File(fileBytes, "application/octet-stream", fileName))
+            .ToActionResult();
     }
 
     [HttpDelete]

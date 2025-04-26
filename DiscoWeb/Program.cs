@@ -17,6 +17,8 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddScoped<IStorageService, StorageService>();
 builder.Services.AddSingleton<ITaskQueue<StorageTask>, StorageTaskQueue>();
+builder.Services.AddSingleton<DiscoWeb.Services.Processors.FileTaskProcessor>();
+builder.Services.AddSingleton<DiscoWeb.Services.Processors.FolderTaskProcessor>();
 
 builder.Services.AddSingleton(serviceProvider =>
 {

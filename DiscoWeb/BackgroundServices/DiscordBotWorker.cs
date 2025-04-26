@@ -1,8 +1,9 @@
 ﻿using DiscoWeb.Errors;
-using DiscoWeb.Helper.Discord;
 using DiscoWeb.Models;
 using DiscoWeb.Queues;
+using DiscoWeb.Services.Processors;
 using FluentResults;
+using Microsoft.Extensions.DependencyInjection;
 using NetCord;
 using NetCord.Rest;
 
@@ -11,7 +12,9 @@ namespace DiscoWeb.BackgroundServices;
 public class DiscordBotWorker(
     ITaskQueue<StorageTask> queue,
     ILogger<DiscordBotWorker> logger,
-    RestClient restClient)
+    RestClient restClient,
+    FileTaskProcessor fileProcessor,
+    FolderTaskProcessor folderProcessor)
     : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -39,75 +42,31 @@ public class DiscordBotWorker(
             var storageTask = await queue.DequeueAsync(stoppingToken);
 
             var (taskType, operationType) = GetTaskInfo(storageTask);
-            logger.LogInformation("Processing {TaskType} storage task ({OperationType}) for path: {Path}", 
-                taskType, operationType, storageTask.Path);
+            logger.LogInformation("Processing {TaskType} storage task ({OperationType}) for path: {Path}", taskType, operationType, storageTask.Path);
 
             try
             {
-                switch (storageTask)
+                Result<object> result = storageTask switch
                 {
-                    case FolderStorageTask folderTask:
-                        await ProcessFolderTask(folderTask);
-                        break;
-                    case FileStorageTask fileTask:
-                        await ProcessFileTask(fileTask);
-                        break;
-                    default:
-                        storageTask.CompletionSource.SetResult(Result.Fail(new InternalServerError("Unknown task type")));
-                        break;
-                }
+                    FolderStorageTask folderTask => await folderProcessor.ProcessAsync(folderTask),
+                    FileStorageTask fileTask => await fileProcessor.ProcessAsync(fileTask),
+                    _ => Result.Fail(new InternalServerError("Unknown task type"))
+                };
+
+                storageTask.CompletionSource.SetResult(result);
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Error processing {TaskType} storage task ({OperationType}) for path: {Path}",
-                    taskType, operationType, storageTask.Path);
-                storageTask.CompletionSource.SetResult(Result.Fail(new InternalServerError($"Error processing {taskType} operation: {operationType}")));
+                    taskType, operationType, storageTask.Path); 
+                storageTask.CompletionSource.SetResult(Result.Fail(new InternalServerError($"Error processing {taskType} operation: {operationType}").CausedBy(ex)));
             }
 
             if (!storageTask.CompletionSource.Task.IsCompleted)
             {
-                logger.LogWarning("TaskCompletionSource not completed after processing {TaskType} task ({OperationType}) for path: {Path}",
-                    taskType, operationType, storageTask.Path);
-                storageTask.CompletionSource.SetResult(Result.Fail($"Something went wrong with {taskType} operation: {operationType}"));
+                logger.LogWarning("Task {TaskType} storage task ({OperationType}) for path: {Path} did not complete", taskType, operationType, storageTask.Path);
+                storageTask.CompletionSource.SetResult(Result.Fail(new InternalServerError($"Task {taskType} operation: {operationType} did not complete")));
             }
-        }
-    }
-
-    private async Task ProcessFolderTask(FolderStorageTask folderTask)
-    {
-        switch (folderTask.OperationType)
-        {
-            case FolderOperationType.Read:
-                Console.WriteLine("Read");
-                break;
-            case FolderOperationType.Delete:
-                Console.WriteLine("Delete");
-                break;
-            case FolderOperationType.Create:
-                Console.WriteLine("Create");
-                break;
-            default:
-                folderTask.CompletionSource.SetResult(Result.Fail("Invalid Operation type"));
-                break;
-        }
-    }
-
-    private async Task ProcessFileTask(FileStorageTask fileTask)
-    {
-        switch (fileTask.OperationType)
-        {
-            case FileOperationType.Read:
-                Console.WriteLine("read");
-                break;
-            case FileOperationType.Upload:
-                await FileStorageHelper.WriteFile(fileTask.Content!, restClient);
-                break;
-            case FileOperationType.Delete:
-                Console.WriteLine("Delete");
-                break;
-            default:
-                fileTask.CompletionSource.SetResult(Result.Fail("Invalid Operation type"));
-                break;
         }
     }
 

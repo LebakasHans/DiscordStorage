@@ -5,7 +5,7 @@ using FluentResults;
 
 namespace DiscoWeb.Services;
 
-public class StorageService(ITaskQueue<StorageTask> queue) : IStorageService
+public class StorageService(ITaskQueue<StorageTask> queue, ILogger<StorageService> logger) : IStorageService
 {
     public async Task<Result<FolderStructureDto>> GetFolderStructureAsync(string path, int depth)
     {
@@ -22,7 +22,7 @@ public class StorageService(ITaskQueue<StorageTask> queue) : IStorageService
 
         var result = await completionTask;
 
-        return result;
+        return ConvertToStringResult(result, "Failed to create folder");
     }
 
     public async Task<Result<string>> DeleteFolderAsync(string path)
@@ -35,7 +35,7 @@ public class StorageService(ITaskQueue<StorageTask> queue) : IStorageService
 
         var result = await completionTask;
 
-        return result;
+        return ConvertToStringResult(result, "Failed to delete folder");
     }
 
     public async Task<Result<string>> GetFileAsync(string path)
@@ -48,7 +48,7 @@ public class StorageService(ITaskQueue<StorageTask> queue) : IStorageService
 
         var result = await completionTask;
 
-        return result;
+        return ConvertToStringResult(result, "Failed to get file");
     }
 
     public async Task<Result<string>> DeleteFileAsync(string path)
@@ -61,7 +61,7 @@ public class StorageService(ITaskQueue<StorageTask> queue) : IStorageService
 
         var result = await completionTask;
 
-        return result;
+        return ConvertToStringResult(result, "Failed to delete file");
     }
 
     public async Task<Result<string>> UploadFileAsync(string path, IFormFile file)
@@ -75,6 +75,24 @@ public class StorageService(ITaskQueue<StorageTask> queue) : IStorageService
 
         var result = await completionTask;
 
-        return result;
+        return ConvertToStringResult(result, "Failed to upload file");
+    }
+
+    private Result<string> ConvertToStringResult(Result<object> result, string errorMessage)
+    {
+        try
+        {
+            if (!result.IsSuccess)
+            {
+                return Result.Fail<string>(result.Value?.ToString() ?? string.Empty);
+            }
+            
+            return Result.Ok(result.Value?.ToString() ?? string.Empty);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "{ErrorPrefix}: Exception during conversion", errorMessage);
+            return Result.Fail(errorMessage);
+        }
     }
 }

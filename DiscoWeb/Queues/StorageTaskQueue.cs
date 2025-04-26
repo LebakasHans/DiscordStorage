@@ -8,7 +8,7 @@ public class StorageTaskQueue : ITaskQueue<StorageTask>
 {
     private readonly Channel<StorageTask> _queue = Channel.CreateUnbounded<StorageTask>();
 
-    public async Task<Task<Result>> EnqueueAsync(StorageTask task)
+    public async Task<Task<Result<object>>> EnqueueAsync(StorageTask task)
     {
         await _queue.Writer.WriteAsync(task);
         return task.CompletionSource.Task;
