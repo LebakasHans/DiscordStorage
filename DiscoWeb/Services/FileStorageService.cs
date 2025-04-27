@@ -7,7 +7,7 @@ using FluentResults;
 
 namespace DiscoWeb.Services;
 
-public class FileStorageService(DiscoContext db, IDiscordFileStorage discordFileStorage) : IFileStorageService
+public class FileStorageService(DiscoContext db, IDiscordFileStorage discordFileStorage, ILogger<FileStorageService> logger) : IFileStorageService
 {
     public async Task<Result<FileModel>> GetFileAsync(Guid fileId)
     {
@@ -24,7 +24,31 @@ public class FileStorageService(DiscoContext db, IDiscordFileStorage discordFile
 
     public async Task<Result<string>> DeleteFileAsync(Guid fileId)
     {
-        throw new NotImplementedException();
+        var file = await db.Files.FindAsync(fileId);
+        if (file is null)
+        {
+            return Result.Fail(new NotFoundError("File does not exist"));
+        }
+
+        var result = await discordFileStorage.DeleteFileAsync(file.MessageIds);
+
+        if (result.IsFailed)
+        {
+            if (bool.TryParse(result.Errors[0].Metadata["PartiallyDeleted"].ToString(), out var isPartiallyDeleted))
+            {
+                file.Corrupted = isPartiallyDeleted;
+                await db.SaveChangesAsync();
+
+                return Result.Fail(isPartiallyDeleted 
+                    ? new Error("An error occurred while deleting the file. The file is now marked as corrupted. Please try again.") 
+                    : new Error("An error occurred while deleting the file. The file remains intact and should still be accessible."));
+            }
+
+            logger.LogError("Failed to delete file {FileName}.", file.Name);
+            return Result.Fail(new InternalServerError("Something went wrong while Deleting the file. It might be corrupted."));
+        }
+
+        return Result.Ok("File deleted successfully");
     }
 
     public async Task<Result<string>> UploadFileAsync(Guid folderId, IFormFile file)

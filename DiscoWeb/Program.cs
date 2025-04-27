@@ -13,7 +13,9 @@ AspNetCoreResult.Setup(config => config.DefaultProfile = new CustomFluentResults
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDbContext<DiscoContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection"),
+        o => o.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery))
+    );
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();

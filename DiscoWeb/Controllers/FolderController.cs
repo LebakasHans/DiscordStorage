@@ -9,10 +9,18 @@ namespace DiscoWeb.Controllers;
 [ApiController]
 public class FolderController(IFolderStorageService fileSystemService) : ControllerBase
 {
-    [HttpGet("structure/{folderId:guid}")]
+    [HttpGet("{folderId:guid}/structure")]
     public async Task<IActionResult> GetFolderStructure(Guid folderId, [FromQuery]int depth = 1)
     {
         var result = await fileSystemService.GetFolderStructureAsync(folderId, depth);
+
+        return result.ToActionResult();
+    }
+
+    [HttpGet("root/structure")]
+    public async Task<IActionResult> GetRootFolderStructure([FromQuery] int depth = 1)
+    {
+        var result = await fileSystemService.GetFolderStructureAsync(null, depth);
 
         return result.ToActionResult();
     }
@@ -26,9 +34,9 @@ public class FolderController(IFolderStorageService fileSystemService) : Control
     }
 
     [HttpDelete("{folderId:guid}")]
-    public async Task<IActionResult> DeleteFolder(Guid folderId)
+    public async Task<IActionResult> DeleteFolder(Guid folderId, [FromQuery] bool recursive = false)
     {
-        var result = await fileSystemService.DeleteFolderAsync(folderId);
+        var result = await fileSystemService.DeleteFolderAsync(folderId, recursive);
 
         return result.ToActionResult();
     }

@@ -1,10 +1,8 @@
 ﻿using DiscoWeb.Errors;
-using DiscoWeb.Models; // Added using for FileModel
+using DiscoWeb.Models;
 using FluentResults;
 using NetCord.Rest;
-using System.IO; // Added for MemoryStream
-using System.Net.Http; // Added for HttpClient
-using static System.Text.RegularExpressions.Regex; // Added for Regex
+using System.Text.RegularExpressions;
 
 namespace DiscoWeb.Discord;
 
@@ -61,7 +59,7 @@ public class DiscordFileStorage(RestClient restClient, ILogger<DiscordFileStorag
 
         try
         {
-            if (messageIds == null || messageIds.Count == 0)
+            if (messageIds.Count == 0)
             {
                 logger.LogWarning("No message IDs provided for reading file.");
                 return Result.Fail(new ValidationError("No message IDs provided"));
@@ -92,7 +90,7 @@ public class DiscordFileStorage(RestClient restClient, ILogger<DiscordFileStorag
 
                 if (i == 0)
                 {
-                    originalFileName = Replace(attachment.FileName, @"\.part\d+$", "");
+                    originalFileName = Regex.Replace(attachment.FileName, @"\.part\d+$", "");
                     if (string.IsNullOrEmpty(originalFileName))
                     {
                         logger.LogWarning("Could not extract original filename from {AttachmentFileName}. Using attachment name as fallback.", attachment.FileName);
@@ -109,8 +107,8 @@ public class DiscordFileStorage(RestClient restClient, ILogger<DiscordFileStorag
             }
 
             combinedStream.Position = 0;
-            var fileBytes = combinedStream.ToArray(); // Read stream into byte array
-            await combinedStream.DisposeAsync(); // Dispose the stream after reading
+            var fileBytes = combinedStream.ToArray();
+            await combinedStream.DisposeAsync();
 
             logger.LogInformation("FileEntry {FileName} successfully reconstructed from {MessageCount} messages.", originalFileName, messageIds.Count);
 
@@ -120,7 +118,7 @@ public class DiscordFileStorage(RestClient restClient, ILogger<DiscordFileStorag
                 Content = fileBytes
             };
 
-            return Result.Ok(fileModel); // Return the FileModel
+            return Result.Ok(fileModel);
         }
         catch (Exception ex)
         {
@@ -130,8 +128,42 @@ public class DiscordFileStorage(RestClient restClient, ILogger<DiscordFileStorag
         }
     }
 
-    public Task<Result> DeleteFileAsync(List<ulong> messageIds)
+    public async Task<Result> DeleteFileAsync(List<ulong> messageIds)
     {
-        throw new NotImplementedException();
+        var isPartiallyDeleted = false;
+
+        logger.LogInformation("Attempting to delete file parts from {MessageCount} messages.", messageIds.Count);
+
+        if (messageIds.Count == 0)
+        {
+            logger.LogWarning("No message IDs provided for file deletion.");
+            return Result.Fail(new NotFoundError("File not found").WithMetadata("PartiallyDeleted", isPartiallyDeleted));
+        }
+        
+        foreach (var messageId in messageIds)
+        {
+            try
+            {
+                logger.LogDebug("Deleting message {MessageId}", messageId);
+                await restClient.DeleteMessageAsync(ChannelId, messageId);
+                logger.LogDebug("Successfully deleted message {MessageId}", messageId);
+
+                isPartiallyDeleted = true;
+            }
+            catch (RestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                logger.LogWarning(ex, "Message {MessageId} not found during deletion, possibly already deleted.", messageId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to delete message {MessageId}.", messageId);
+                return Result.Fail(new Error("Failed to delete message")
+                    .CausedBy(ex)
+                    .WithMetadata("PartiallyDeleted", isPartiallyDeleted));
+            }
+        }
+        
+        logger.LogInformation("Successfully deleted file parts from {MessageCount} messages.", messageIds.Count);
+        return Result.Ok();
     }
 }

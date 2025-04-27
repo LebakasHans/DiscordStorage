@@ -5,6 +5,7 @@ public class FileEntry
     public Guid Id { get; set; }
     public required string Name { get; set; }
     public long Size { get; set; }
+    public bool Corrupted { get; set; } = false;
 
     public Guid FolderId { get; set; }
     public virtual required Folder Folder { get; set; }

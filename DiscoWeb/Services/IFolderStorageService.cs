@@ -5,7 +5,7 @@ namespace DiscoWeb.Services;
 
 public interface IFolderStorageService
 {
-    Task<Result<FolderStructureDto>> GetFolderStructureAsync(Guid folderId, int depth);
+    Task<Result<FolderStructureDto>> GetFolderStructureAsync(Guid? folderId, int depth);
     Task<Result<string>> CreateFolderAsync(FolderDto folderDto);
-    Task<Result<string>> DeleteFolderAsync(Guid folderId);
+    Task<Result<string>> DeleteFolderAsync(Guid folderId, bool recursive);
 }
