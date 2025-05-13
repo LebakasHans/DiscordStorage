@@ -10,25 +10,25 @@ namespace DiscoWeb.Controllers;
 public class FolderController(IFolderStorageService fileSystemService) : ControllerBase
 {
     [HttpGet("{folderId:guid}/structure")]
-    public async Task<IActionResult> GetFolderStructure(Guid folderId, [FromQuery]int depth = 1)
+    public async Task<IActionResult> GetFolderStructure(Guid folderId)
     {
-        var result = await fileSystemService.GetFolderStructureAsync(folderId, depth);
+        var result = await fileSystemService.GetFolderStructureAsync(folderId);
 
         return result.ToActionResult();
     }
 
     [HttpGet("root/structure")]
-    public async Task<IActionResult> GetRootFolderStructure([FromQuery] int depth = 1)
+    public async Task<IActionResult> GetRootFolderStructure()
     {
-        var result = await fileSystemService.GetFolderStructureAsync(null, depth);
+        var result = await fileSystemService.GetFolderStructureAsync(null);
 
         return result.ToActionResult();
     }
 
     [HttpPost]
-    public async Task<IActionResult> CreateFolder([FromBody] FolderDto folderDto)
+    public async Task<IActionResult> CreateFolder([FromBody] CreateFolderDto createFolderDto)
     {
-        var result = await fileSystemService.CreateFolderAsync(folderDto);
+        var result = await fileSystemService.CreateFolderAsync(createFolderDto);
 
         return result.ToActionResult();
     }

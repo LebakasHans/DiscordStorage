@@ -48,6 +48,17 @@ public class FileStorageService(DiscoContext db, IDiscordFileStorage discordFile
             return Result.Fail(new InternalServerError("Something went wrong while Deleting the file. It might be corrupted."));
         }
 
+        var removedFile = await db.Files.FindAsync(fileId);
+        if (removedFile != null)
+        {
+            db.Files.Remove(removedFile);
+            await db.SaveChangesAsync();
+        }
+        else
+        {
+            logger.LogWarning("File removed successfully but not found in Database");
+        }
+
         return Result.Ok("File deleted successfully");
     }
 
@@ -56,7 +67,7 @@ public class FileStorageService(DiscoContext db, IDiscordFileStorage discordFile
         bool fileExists = db.Files.Any(x => x.FolderId == folderId && x.Name == file.FileName);
         if (fileExists)
         {
-            return Result.Fail(new Error("File with this name already exists in the target folder"));
+            return Result.Fail(new ValidationError("File with this name already exists in the target folder"));
         }
 
         var folder = await db.Folders.FindAsync(folderId);

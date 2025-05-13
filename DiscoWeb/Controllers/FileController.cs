@@ -30,6 +30,7 @@ public class FileController(IFileStorageService storageService) : ControllerBase
         return result.ToActionResult();
     }
 
+    [DisableRequestSizeLimit]
     [HttpPost("{folderId:guid}")]
     public async Task<IActionResult> UploadFile(Guid folderId, IFormFile file)
     {

@@ -4,13 +4,28 @@ using DiscoWeb.Discord;
 using DiscoWeb.ResultConversion;
 using DiscoWeb.Services;
 using FluentResults.Extensions.AspNetCore;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using NetCord;
 using NetCord.Rest;
+using System.Diagnostics;
 
 AspNetCoreResult.Setup(config => config.DefaultProfile = new CustomFluentResultsProfile());
 
+const string myAllowSpecificOrigins = "_myAllowSpecificOrigins";
+
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(myAllowSpecificOrigins,
+        b =>
+        {
+            b.AllowAnyOrigin()
+                .AllowAnyMethod()
+                .AllowAnyHeader();
+        });
+});
 
 builder.Services.AddDbContext<DiscoContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection"),
@@ -36,6 +51,16 @@ builder.Services.AddSingleton(serviceProvider =>
     return new RestClient(new BotToken(botTokenString));
 });
 
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = long.MaxValue;
+});
+
+builder.WebHost.ConfigureKestrel(serverOptions =>
+{
+    serverOptions.Limits.MaxRequestBodySize = null;
+});
+
 var app = builder.Build();
 
 #region Database Initialization
@@ -52,6 +77,7 @@ using (var scope = app.Services.CreateScope())
         db.SaveChanges();
     }
 }
+
 #endregion
 
 if (app.Environment.IsDevelopment())
@@ -61,6 +87,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+app.UseCors(myAllowSpecificOrigins);
 
 app.UseAuthorization();
 

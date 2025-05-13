@@ -9,51 +9,102 @@ namespace DiscoWeb.Services;
 
 public class FolderStorageService(DiscoContext db, IFileStorageService fileStorageService) : IFolderStorageService
 {
-    public async Task<Result<FolderStructureDto>> GetFolderStructureAsync(Guid? folderId, int depth)
+    public async Task<Result<FolderStructureDto>> GetFolderStructureAsync(Guid? folderId)
     {
-        Folder? startFolder;
+        Folder? targetFolder;
         if (folderId.HasValue)
         {
-            startFolder = await db.Folders
+            targetFolder = await db.Folders
                 .Include(f => f.Files)
+                .Include(f => f.ChildFolders)
                 .FirstOrDefaultAsync(f => f.Id == folderId.Value);
-            if (startFolder is null)
+            if (targetFolder is null)
             {
                 return Result.Fail(new NotFoundError("Specified folder does not exist"));
             }
         }
         else
         {
-            startFolder = await db.Folders
+            targetFolder = await db.Folders
                 .Include(f => f.Files)
+                .Include(f => f.ChildFolders)
                 .FirstOrDefaultAsync(f => f.ParentFolderId == null);
-            if (startFolder is null)
+            if (targetFolder is null)
             {
-                return Result.Fail(new Error("Root folder not found. Database might be uninitialized."));
+                return Result.Fail(new InternalServerError("Root folder not found. Database might be uninitialized."));
             }
         }
 
-        var folderStructure = await BuildFolderStructureRecursiveAsync(startFolder, depth);
+        var currentFolderPath = await BuildFolderPathAsync(targetFolder.Id);
+
+        var fileEntries = targetFolder.Files.Select(f =>
+        {
+            var extension = Path.GetExtension(f.Name);
+            var type = string.IsNullOrEmpty(extension) ? "File" : extension[1..].ToUpper() + "-File";
+            var filePath = currentFolderPath == "/" ? $"/{f.Name}" : $"{currentFolderPath}/{f.Name}";
+
+            return new ExplorerEntry
+            {
+                Id = f.Id,
+                Name = f.Name,
+                Path = filePath,
+                Size = f.Size,
+                IsFile = true,
+                Type = type,
+                Corrupted = f.Corrupted,
+                CreatedAt = f.CreatedAt,
+                ModifiedAt = f.ModifiedAt
+            };
+        }).ToList();
+
+
+        var folderEntries = targetFolder.ChildFolders.Select(f =>
+        {
+             // Avoid double slash at root
+            var childFolderPath = currentFolderPath == "/" ? $"/{f.Name}" : $"{currentFolderPath}/{f.Name}";
+            return new ExplorerEntry
+            {
+                Id = f.Id,
+                Name = f.Name,
+                Path = childFolderPath, // Updated path construction
+                IsFile = false,
+                Type = "Folder",
+                CreatedAt = f.CreatedAt,
+                ModifiedAt = f.ModifiedAt
+            };
+        }).ToList();
+
+        var entries = fileEntries.Concat(folderEntries).ToList();
+
+        var folderStructure = new FolderStructureDto
+        {
+            FolderId = targetFolder.Id,
+            Name = targetFolder.Name,
+            ParentFolderId = targetFolder.ParentFolderId,
+            Path = currentFolderPath,
+            Entries = entries,
+        };
+
         return Result.Ok(folderStructure);
     }
 
-    public async Task<Result<string>> CreateFolderAsync(FolderDto folderDto)
+    public async Task<Result<string>> CreateFolderAsync(CreateFolderDto createFolderDto)
     {
-        var parentFolder = db.Folders.Include(x => x.ChildFolders).FirstOrDefault(x => x.Id == folderDto.ParentId);
+        var parentFolder = db.Folders.Include(x => x.ChildFolders).FirstOrDefault(x => x.Id == createFolderDto.ParentId);
         if (parentFolder is null)
         {
             return Result.Fail(new NotFoundError("Parent folder does not exist"));
         }
 
-        var folderExists = parentFolder.ChildFolders.Any(x => x.Name == folderDto.Name);
+        var folderExists = parentFolder.ChildFolders.Any(x => x.Name == createFolderDto.Name);
         if (folderExists)
         {
-            return Result.Fail(new Error("Folder already exists"));
+            return Result.Fail(new ValidationError("Folder already exists"));
         }
 
         db.Folders.Add(new Folder
         {
-            Name = folderDto.Name,
+            Name = createFolderDto.Name,
             ParentFolder = parentFolder,
         });
         await db.SaveChangesAsync();
@@ -105,33 +156,30 @@ public class FolderStorageService(DiscoContext db, IFileStorageService fileStora
         return Result.Ok("Folder deleted successfully");
     }
 
-    private async Task<FolderStructureDto> BuildFolderStructureRecursiveAsync(Folder folder, int depth)
+    private async Task<string> BuildFolderPathAsync(Guid folderId)
     {
-        var dto = new FolderStructureDto
-        {
-            FolderId = folder.Id,
-            Name = folder.Name,
-            Files = folder.Files.Select(f => new FileDto
-            {
-                Id = f.Id,
-                Name = f.Name,
-                Size = f.Size,
-                Corrupted = f.Corrupted,
-                CreatedAt = f.CreatedAt,
-                ModifiedAt = f.ModifiedAt
-            }).ToList()
-        };
+        var pathSegments = new List<string>();
+        Guid? currentFolderId = folderId;
 
-        if (depth > 0)
+        while (currentFolderId.HasValue)
         {
-            await db.Entry(folder).Collection(f => f.ChildFolders).LoadAsync();
-            foreach (var subFolder in folder.ChildFolders)
+            var folder = await db.Folders
+                                 .AsNoTracking()
+                                 .Select(f => new { f.Id, f.Name, f.ParentFolderId })
+                                 .FirstOrDefaultAsync(f => f.Id == currentFolderId.Value);
+
+            if (folder == null) break; // Should not happen in a consistent DB
+
+            if (folder.ParentFolderId != null)
             {
-                await db.Entry(subFolder).Collection(f => f.Files).LoadAsync();
-                dto.SubFolders.Add(await BuildFolderStructureRecursiveAsync(subFolder, depth - 1));
+                pathSegments.Add(folder.Name);
             }
+
+            currentFolderId = folder.ParentFolderId;
         }
 
-        return dto;
+        pathSegments.Reverse();
+
+        return "/" + string.Join('/', pathSegments);
     }
 }

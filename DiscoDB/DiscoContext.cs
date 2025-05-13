@@ -1,5 +1,6 @@
 ﻿using DiscoDB.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace DiscoDB;
 
@@ -39,7 +40,11 @@ public class DiscoContext(DbContextOptions<DiscoContext> options) : DbContext(op
                   .HasConversion(
                       v => string.Join(',', v),
                       v => v.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(ulong.Parse).ToList()
-                  );
+                  )
+                  .Metadata.SetValueComparer(new ValueComparer<List<ulong>>(
+                        (c1, c2) => c1 != null && c2 != null && c1.SequenceEqual(c2),
+                        c => c.Aggregate(0, (a, v) => HashCode.Combine(a, v.GetHashCode())),
+                        c => c.ToList()));
 
         });
     }
