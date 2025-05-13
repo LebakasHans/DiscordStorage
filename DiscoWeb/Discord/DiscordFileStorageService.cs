@@ -27,21 +27,26 @@ public class DiscordFileStorage(RestClient restClient, ILogger<DiscordFileStorag
 
             while ((bytesRead = await stream.ReadAsync(buffer)) > 0)
             {
-            using var chunkStream = new MemoryStream(buffer, 0, bytesRead);
-            var partFileName = $"{file.FileName}.part{partNumber}";
+                var attachments = new List<AttachmentProperties>();
+                for (int i = 0; i < 10 && bytesRead > 0; i++)
+                {
+                    using var chunkStream = new MemoryStream(buffer, 0, bytesRead);
+                    var partFileName = $"{file.FileName}.part{partNumber}";
 
-            var attachment = new AttachmentProperties(partFileName, chunkStream);
-            var messageProperties = new MessageProperties().WithAttachments(new[] { attachment });
+                    attachments.Add(new AttachmentProperties(partFileName, chunkStream));
 
-            var sentMessage = await restClient.SendMessageAsync(ChannelId, messageProperties);
-            messageIds.Add(sentMessage.Id);
+                    bytesRead = await stream.ReadAsync(buffer);
+                    partNumber++;
+                }
 
-            partNumber++;
+                var messageProperties = new MessageProperties().WithAttachments(attachments);
+                var sentMessage = await restClient.SendMessageAsync(ChannelId, messageProperties);
+                messageIds.Add(sentMessage.Id);
             }
 
             stopwatch.Stop();
             logger.LogWarning("File {FileName} uploaded in {ElapsedMilliseconds} ms.", file.FileName, stopwatch.ElapsedMilliseconds);
-            logger.LogInformation("FileEntry {FileName} uploaded successfully in {MessageCount} messages. Time taken: {ElapsedMilliseconds} ms.", 
+            logger.LogInformation("FileEntry {FileName} uploaded successfully in {MessageCount} messages. Time taken: {ElapsedMilliseconds} ms.",
             file.FileName, messageIds.Count, stopwatch.ElapsedMilliseconds);
             return Result.Ok(messageIds);
         }
@@ -127,7 +132,7 @@ public class DiscordFileStorage(RestClient restClient, ILogger<DiscordFileStorag
                 originalFileName = firstPartFileName;
             }
         }
-        
+
         var combinedStream = new MemoryStream();
         foreach (var part in orderedParts)
         {
@@ -169,15 +174,15 @@ public class DiscordFileStorage(RestClient restClient, ILogger<DiscordFileStorag
         }
 
         var successfulParts = allTaskResults.Select(r => r.Value);
-        
+
         try
         {
-            var fileModel = await AssembleFileFromPartsAsync(successfulParts, "unknown_file"); 
-            
+            var fileModel = await AssembleFileFromPartsAsync(successfulParts, "unknown_file");
+
             logger.LogInformation("FileEntry {FileName} successfully reconstructed from {MessageCount} messages.", fileModel.FileName, messageIds.Count);
             return Result.Ok(fileModel);
         }
-        catch (Exception ex) 
+        catch (Exception ex)
         {
             logger.LogError(ex, "Failed to assemble file from parts. MessageIds: {MessageIdsString}", string.Join(", ", messageIds));
             return Result.Fail<FileModel>(new InternalServerError($"Failed to assemble file: {ex.Message}").CausedBy(ex));
