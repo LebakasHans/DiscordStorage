@@ -17,13 +17,13 @@
 
   <ItemGroup>
     <PackageReference Include="FluentResults" Version="3.16.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.16" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.4" />
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.21.2" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
     <PackageReference Include="NetCord" Version="1.0.0-alpha.363" />
 
     <PackageReference Include="System.Text.Encodings.Web" Version="9.0.4" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
     <PackageReference Include="FluentResults.Extensions.AspNetCore" Version="0.1.0" />
   </ItemGroup>
 

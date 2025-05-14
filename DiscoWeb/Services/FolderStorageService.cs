@@ -35,19 +35,17 @@ public class FolderStorageService(DiscoContext db, IFileStorageService fileStora
             }
         }
 
-        var currentFolderPath = await BuildFolderPathAsync(targetFolder.Id);
+        var currentFolderPath = await GetPathSegmentsAsync(targetFolder.Id);
 
         var fileEntries = targetFolder.Files.Select(f =>
         {
             var extension = Path.GetExtension(f.Name);
             var type = string.IsNullOrEmpty(extension) ? "File" : extension[1..].ToUpper() + "-File";
-            var filePath = currentFolderPath == "/" ? $"/{f.Name}" : $"{currentFolderPath}/{f.Name}";
 
             return new ExplorerEntry
             {
                 Id = f.Id,
                 Name = f.Name,
-                Path = filePath,
                 Size = f.Size,
                 IsFile = true,
                 Type = type,
@@ -58,20 +56,14 @@ public class FolderStorageService(DiscoContext db, IFileStorageService fileStora
         }).ToList();
 
 
-        var folderEntries = targetFolder.ChildFolders.Select(f =>
+        var folderEntries = targetFolder.ChildFolders.Select(f => new ExplorerEntry
         {
-             // Avoid double slash at root
-            var childFolderPath = currentFolderPath == "/" ? $"/{f.Name}" : $"{currentFolderPath}/{f.Name}";
-            return new ExplorerEntry
-            {
-                Id = f.Id,
-                Name = f.Name,
-                Path = childFolderPath, // Updated path construction
-                IsFile = false,
-                Type = "Folder",
-                CreatedAt = f.CreatedAt,
-                ModifiedAt = f.ModifiedAt
-            };
+            Id = f.Id,
+            Name = f.Name,
+            IsFile = false,
+            Type = "Folder",
+            CreatedAt = f.CreatedAt,
+            ModifiedAt = f.ModifiedAt
         }).ToList();
 
         var entries = fileEntries.Concat(folderEntries).ToList();
@@ -112,7 +104,7 @@ public class FolderStorageService(DiscoContext db, IFileStorageService fileStora
         return Result.Ok("Folder created successfully");
     }
 
-    public async Task<Result<string>> DeleteFolderAsync(Guid folderId, bool recursive)
+    public async Task<Result<string>> DeleteFolderAsync(Guid folderId, bool recursive, bool hardDelete)
     {
         var folder = await db.Folders
             .Include(x => x.ChildFolders)
@@ -128,12 +120,11 @@ public class FolderStorageService(DiscoContext db, IFileStorageService fileStora
         if (!recursive && (folder.ChildFolders.Count != 0 || folder.Files.Count != 0))
             return Result.Fail(new ValidationError("Folder is not empty"));
 
-
         if (recursive)
         {
             foreach (var childFolder in folder.ChildFolders.ToList())
             {
-                var deleteResult = await DeleteFolderAsync(childFolder.Id, true);
+                var deleteResult = await DeleteFolderAsync(childFolder.Id, true, hardDelete);
                 if (deleteResult.IsFailed)
                 {
                     return deleteResult;
@@ -142,7 +133,7 @@ public class FolderStorageService(DiscoContext db, IFileStorageService fileStora
 
             foreach (var file in folder.Files.ToList())
             {
-                var deleteFileResult = await fileStorageService.DeleteFileAsync(file.Id);
+                var deleteFileResult = await fileStorageService.DeleteFileAsync(file.Id, hardDelete);
                 if (deleteFileResult.IsFailed)
                 {
                     return deleteFileResult;
@@ -156,30 +147,31 @@ public class FolderStorageService(DiscoContext db, IFileStorageService fileStora
         return Result.Ok("Folder deleted successfully");
     }
 
-    private async Task<string> BuildFolderPathAsync(Guid folderId)
+    private async Task<List<SimpleFolderDto>> GetPathSegmentsAsync(Guid folderId)
     {
-        var pathSegments = new List<string>();
+        List<SimpleFolderDto> pathSegments = [];
         Guid? currentFolderId = folderId;
 
         while (currentFolderId.HasValue)
         {
             var folder = await db.Folders
                                  .AsNoTracking()
-                                 .Select(f => new { f.Id, f.Name, f.ParentFolderId })
                                  .FirstOrDefaultAsync(f => f.Id == currentFolderId.Value);
 
-            if (folder == null) break; // Should not happen in a consistent DB
+            if (folder == null) break;
 
-            if (folder.ParentFolderId != null)
+
+            pathSegments.Add(new SimpleFolderDto
             {
-                pathSegments.Add(folder.Name);
-            }
+                FolderId = folder.Id,
+                Name = folder.Name
+            });
 
             currentFolderId = folder.ParentFolderId;
         }
 
         pathSegments.Reverse();
 
-        return "/" + string.Join('/', pathSegments);
+        return pathSegments;
     }
 }

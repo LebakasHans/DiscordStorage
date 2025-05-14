@@ -1,9 +1,11 @@
 ﻿using DiscoWeb.Errors;
 using DiscoWeb.Models;
 using FluentResults;
+using NetCord.Gateway;
 using NetCord.Rest;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using NetCord;
 
 namespace DiscoWeb.Discord;
 
@@ -16,50 +18,61 @@ public class DiscordFileStorage(RestClient restClient, ILogger<DiscordFileStorag
     {
         logger.LogInformation("Attempting to upload file {FileName} of size {FileSize} bytes.", file.FileName, file.Length);
         var stopwatch = Stopwatch.StartNew();
-        List<ulong> messageIds = new();
 
-        try
+
+        await using var stream = file.OpenReadStream();
+        var readBuffer = new byte[MaxChunkSize];
+        int partNumber = 1;
+
+        List<Task<RestMessage>> uploadTasks = [];
+        var streamsToDispose = new List<MemoryStream>();
+
+
+        while (true)
         {
-            await using var stream = file.OpenReadStream();
-            var buffer = new byte[MaxChunkSize];
-            int partNumber = 1;
-            int bytesRead;
+            var attachments = new List<AttachmentProperties>();
 
-            while ((bytesRead = await stream.ReadAsync(buffer)) > 0)
+            for (int i = 0; i < 10; i++) 
             {
-                var attachments = new List<AttachmentProperties>();
-                for (int i = 0; i < 10 && bytesRead > 0; i++)
-                {
-                    using var chunkStream = new MemoryStream(buffer, 0, bytesRead);
-                    var partFileName = $"{file.FileName}.part{partNumber}";
+                int bytesReadFromFile = await stream.ReadAsync(readBuffer);
+                if (bytesReadFromFile == 0)
+                    break;
 
-                    attachments.Add(new AttachmentProperties(partFileName, chunkStream));
+                var partData = new byte[bytesReadFromFile];
+                Array.Copy(readBuffer, 0, partData, 0, bytesReadFromFile);
 
-                    bytesRead = await stream.ReadAsync(buffer);
-                    partNumber++;
-                }
+                var chunkStream = new MemoryStream(partData);
+                streamsToDispose.Add(chunkStream);
 
-                var messageProperties = new MessageProperties().WithAttachments(attachments);
-                var sentMessage = await restClient.SendMessageAsync(ChannelId, messageProperties);
-                messageIds.Add(sentMessage.Id);
+                var partFileName = $"{file.FileName}.part{partNumber}";
+                attachments.Add(new AttachmentProperties(partFileName, chunkStream));
+                partNumber++;
             }
 
-            stopwatch.Stop();
-            logger.LogWarning("File {FileName} uploaded in {ElapsedMilliseconds} ms.", file.FileName, stopwatch.ElapsedMilliseconds);
-            logger.LogInformation("FileEntry {FileName} uploaded successfully in {MessageCount} messages. Time taken: {ElapsedMilliseconds} ms.",
-            file.FileName, messageIds.Count, stopwatch.ElapsedMilliseconds);
-            return Result.Ok(messageIds);
+            if (attachments.Count == 0)
+                break;
+
+            var messageProperties = new MessageProperties().WithAttachments(attachments);
+
+            uploadTasks.Add(restClient.SendMessageAsync(ChannelId, messageProperties));
         }
-        catch (Exception ex)
+
+        await Task.WhenAll(uploadTasks);
+
+        var messageIds = uploadTasks.Select(task => task.Result.Id).ToList();
+
+        foreach (var ms in streamsToDispose)
         {
-            stopwatch.Stop();
-            logger.LogError(ex, "Failed to store file {FileName}. Time taken: {ElapsedMilliseconds} ms.", file.FileName, stopwatch.ElapsedMilliseconds);
-            return Result.Fail(new Error($"Failed to store file: {ex.Message}")
-            .CausedBy(ex));
+            await ms.DisposeAsync();
         }
+
+        stopwatch.Stop();
+        logger.LogInformation("FileEntry {FileName} uploaded successfully in {MessageCount} messages. Time taken: {ElapsedMilliseconds} ms.",
+        file.FileName, messageIds.Count, stopwatch.ElapsedMilliseconds);
+        return Result.Ok(messageIds);
     }
 
-    private async Task<Result<FilePart>> DownloadFilePartAsync(ulong messageId, int index, int totalCount)
+    private async Task<Result<List<FilePart>>> DownloadFilePartAsync(ulong messageId, int index, int totalCount)
     {
         try
         {
@@ -73,48 +86,66 @@ public class DiscordFileStorage(RestClient restClient, ILogger<DiscordFileStorag
             catch (RestException ex)
             {
                 logger.LogWarning(ex, "RestException while fetching message {MessageId} for part {IndexPlusOne}.", messageId, index + 1);
-                return Result.Fail<FilePart>(new InternalServerError($"Failed to fetch message details for {messageId}. Discord API error: {ex.Message}").CausedBy(ex));
+                return Result.Fail(new InternalServerError($"Failed to fetch message details for {messageId}. Discord API error: {ex.Message}").CausedBy(ex));
             }
 
             if (message.Attachments.Count == 0)
             {
                 var errorMsg = $"Message {messageId} contains no attachments.";
                 logger.LogWarning(errorMsg);
-                return Result.Fail<FilePart>(new InternalServerError(errorMsg));
-            }
-            if (message.Attachments.Count != 1)
-            {
-                var errorMsg = $"Message {messageId} contains {message.Attachments.Count} attachments, expected exactly 1.";
-                logger.LogWarning(errorMsg);
-                return Result.Fail<FilePart>(new InternalServerError(errorMsg));
+                return Result.Fail(new InternalServerError(errorMsg));
             }
 
-            var attachment = message.Attachments[0];
-            logger.LogDebug("Downloading attachment {AttachmentFileName} from URL {AttachmentUrl} for message {MessageId}.", attachment.FileName, attachment.Url, messageId);
+            List<Task<Result<FilePart>>> downloadTasks = [];
 
-            using var response = await httpClient.GetAsync(attachment.Url, HttpCompletionOption.ResponseHeadersRead);
-            if (!response.IsSuccessStatusCode)
+            for (int i = 0; i < message.Attachments.Count; i++)
             {
-                var errorMsg = $"Failed to download attachment {attachment.FileName}. HTTP status code: {response.StatusCode}";
-                logger.LogWarning(errorMsg);
-                return Result.Fail<FilePart>(new InternalServerError(errorMsg));
+                var task = DownloadAttachment(message.Attachments[i], index + i);
+                downloadTasks.Add(task);
             }
 
-            var contentBytes = await response.Content.ReadAsByteArrayAsync();
+            await Task.WhenAll(downloadTasks);
 
-            logger.LogDebug("Finished downloading part {IndexPlusOne}/{Total} for message {MessageId}.", index + 1, totalCount, messageId);
-            return Result.Ok(new FilePart
+            var results = downloadTasks.Select(x => x.Result).ToList();
+
+            if (results.Any(x => x.IsFailed))
             {
-                Index = index,
-                Content = contentBytes,
-                RawFileName = attachment.FileName
-            });
+                return Result.Fail(new InternalServerError("Failed to download Message")).WithErrors(results.SelectMany(x => x.Errors).ToList());
+            }
+
+            var parts = results.Select(x => x.Value).ToList();
+
+            return Result.Ok(parts);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Unexpected error processing message {MessageId} for part {IndexPlusOne}.", messageId, index + 1);
-            return Result.Fail<FilePart>(new InternalServerError($"Unexpected error processing part for message {messageId}.").CausedBy(ex));
+            return Result.Fail(new InternalServerError($"Unexpected error processing part for message {messageId}.").CausedBy(ex));
         }
+    }
+
+    private async Task<Result<FilePart>> DownloadAttachment(Attachment attachment, int index)
+    {
+        logger.LogInformation("Downloading attachment {AttachmentFileName} from URL {AttachmentUrl}.", attachment.FileName, attachment.Url);
+
+        using var response = await httpClient.GetAsync(attachment.Url, HttpCompletionOption.ResponseHeadersRead);
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorMsg = $"Failed to download attachment {attachment.FileName}. HTTP status code: {response.StatusCode}";
+            logger.LogWarning(errorMsg);
+            return Result.Fail(new InternalServerError(errorMsg));
+        }
+
+        var contentBytes = await response.Content.ReadAsByteArrayAsync();
+
+        logger.LogInformation("Finished downloading part {AttachmentFileName}.", attachment.FileName);
+
+        return Result.Ok(new FilePart
+        {
+            Index = index,
+            Content = contentBytes,
+            RawFileName = attachment.FileName
+        });
     }
 
     private async Task<FileModel> AssembleFileFromPartsAsync(IEnumerable<FilePart> successfulParts, string defaultFileNameOnError)
@@ -164,7 +195,7 @@ public class DiscordFileStorage(RestClient restClient, ILogger<DiscordFileStorag
         var allTaskResults = await Task.WhenAll(tasks);
 
         var failedTasksResults = allTaskResults.Where(r => r.IsFailed).ToList();
-        if (failedTasksResults.Any())
+        if (failedTasksResults.Count != 0)
         {
             var aggregatedErrors = failedTasksResults.SelectMany(r => r.Errors).ToList();
             logger.LogError("One or more file parts failed to download. MessageIds: {MessageIdsString}. Errors: {ErrorMessages}",
@@ -177,7 +208,7 @@ public class DiscordFileStorage(RestClient restClient, ILogger<DiscordFileStorag
 
         try
         {
-            var fileModel = await AssembleFileFromPartsAsync(successfulParts, "unknown_file");
+            var fileModel = await AssembleFileFromPartsAsync(successfulParts.SelectMany(x => x), "unknown_file");
 
             logger.LogInformation("FileEntry {FileName} successfully reconstructed from {MessageCount} messages.", fileModel.FileName, messageIds.Count);
             return Result.Ok(fileModel);

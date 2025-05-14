@@ -1,10 +1,12 @@
 ﻿using DiscoWeb.Dtos;
 using DiscoWeb.Services;
 using FluentResults.Extensions.AspNetCore;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DiscoWeb.Controllers;
 
+[Authorize]
 [Route("folder")]
 [ApiController]
 public class FolderController(IFolderStorageService fileSystemService) : ControllerBase
@@ -34,9 +36,9 @@ public class FolderController(IFolderStorageService fileSystemService) : Control
     }
 
     [HttpDelete("{folderId:guid}")]
-    public async Task<IActionResult> DeleteFolder(Guid folderId, [FromQuery] bool recursive = false)
+    public async Task<IActionResult> DeleteFolder(Guid folderId, [FromQuery] bool recursive = false, [FromQuery] bool hardDelete = false)
     {
-        var result = await fileSystemService.DeleteFolderAsync(folderId, recursive);
+        var result = await fileSystemService.DeleteFolderAsync(folderId, recursive, hardDelete);
 
         return result.ToActionResult();
     }

@@ -1,9 +1,11 @@
 ﻿using DiscoWeb.Services;
 using FluentResults.Extensions.AspNetCore;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DiscoWeb.Controllers;
 
+[Authorize]
 [Route("file")]
 [ApiController]
 public class FileController(IFileStorageService storageService) : ControllerBase
@@ -23,9 +25,9 @@ public class FileController(IFileStorageService storageService) : ControllerBase
     }
 
     [HttpDelete("{fileId:guid}")]
-    public async Task<IActionResult> DeleteFile(Guid fileId)
+    public async Task<IActionResult> DeleteFile(Guid fileId, [FromQuery] bool hardDelete = false)
     {
-        var result = await storageService.DeleteFileAsync(fileId);
+        var result = await storageService.DeleteFileAsync(fileId, hardDelete);
 
         return result.ToActionResult();
     }

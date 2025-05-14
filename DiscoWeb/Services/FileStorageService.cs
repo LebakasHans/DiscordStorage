@@ -22,7 +22,7 @@ public class FileStorageService(DiscoContext db, IDiscordFileStorage discordFile
         return result;
     }
 
-    public async Task<Result<string>> DeleteFileAsync(Guid fileId)
+    public async Task<Result<string>> DeleteFileAsync(Guid fileId, bool hardDelete)
     {
         var file = await db.Files.FindAsync(fileId);
         if (file is null)
@@ -30,23 +30,26 @@ public class FileStorageService(DiscoContext db, IDiscordFileStorage discordFile
             return Result.Fail(new NotFoundError("File does not exist"));
         }
 
-        //var result = await discordFileStorage.DeleteFileAsync(file.MessageIds);
+        if (hardDelete)
+        {
+            var result = await discordFileStorage.DeleteFileAsync(file.MessageIds);
 
-        //if (result.IsFailed)
-        //{
-        //    if (bool.TryParse(result.Errors[0].Metadata["PartiallyDeleted"].ToString(), out var isPartiallyDeleted))
-        //    {
-        //        file.Corrupted = isPartiallyDeleted;
-        //        await db.SaveChangesAsync();
+            if (result.IsFailed)
+            {
+                if (bool.TryParse(result.Errors[0].Metadata["PartiallyDeleted"].ToString(), out var isPartiallyDeleted))
+                {
+                    file.Corrupted = isPartiallyDeleted;
+                    await db.SaveChangesAsync();
 
-        //        return Result.Fail(isPartiallyDeleted 
-        //            ? new Error("An error occurred while deleting the file. The file is now marked as corrupted. Please try again.") 
-        //            : new Error("An error occurred while deleting the file. The file remains intact and should still be accessible."));
-        //    }
+                    return Result.Fail(isPartiallyDeleted
+                        ? new Error("An error occurred while deleting the file. The file is now marked as corrupted. Please try again.")
+                        : new Error("An error occurred while deleting the file. The file remains intact and should still be accessible."));
+                }
 
-        //    logger.LogError("Failed to delete file {FileName}.", file.Name);
-        //    return Result.Fail(new InternalServerError("Something went wrong while Deleting the file. It might be corrupted."));
-        //}
+                logger.LogError("Failed to delete file {FileName}.", file.Name);
+                return Result.Fail(new InternalServerError("Something went wrong while Deleting the file. It might be corrupted."));
+            }
+        }
 
         var removedFile = await db.Files.FindAsync(fileId);
         if (removedFile != null)
