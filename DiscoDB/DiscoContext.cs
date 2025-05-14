@@ -7,7 +7,7 @@ namespace DiscoDB;
 public class DiscoContext(DbContextOptions<DiscoContext> options) : DbContext(options)
 {
     public DbSet<Folder> Folders { get; set; }
-    public DbSet<Models.FileEntry> Files { get; set; }
+    public DbSet<FileEntry> Files { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
