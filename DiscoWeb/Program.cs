@@ -130,7 +130,7 @@ using (var scope = app.Services.CreateScope())
     {
         db.Folders.Add(new Folder
         {
-            Name = "",
+            Name = "root",
         });
         db.SaveChanges();
     }
