@@ -47,7 +47,8 @@ public class AuthenticationController(IConfiguration appSettings) : ControllerBa
 
         var tokenDescriptor = new SecurityTokenDescriptor
         {
-            SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
+            SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature),
+            Expires = DateTime.UtcNow.AddYears(100)
         };
 
         var token = tokenHandler.CreateToken(tokenDescriptor);
